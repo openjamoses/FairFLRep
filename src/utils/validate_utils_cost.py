@@ -1,16 +1,14 @@
 import csv
 from numpy import random
-import numpy as np
 import matplotlib.pyplot as plt
-from src.dnn_testing.eAI.utils.arachne_fairness_validation import FairArachne2
-from src.dnn_testing.eAI.utils.evaluate_utils import _fairness_sub
+from evaluate_utils import _fairness_sub
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import backend as K  # noqa: N812
 from tqdm import tqdm, trange
 from pathlib import Path
-from src.dnn_testing.eAI.utils import data_util
-from src.dnn_testing.eAI.utils.fault_localization_validation_cost import FaultLocalization
+from utils import data_util
+from utils.fault_localization_validation_cost import FaultLocalization
 
 
 class Localization:

@@ -1,7 +1,8 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-from src.dnn_testing.eAI.utils.fairness import calculate_Disparate_Impact, calculate_SPD, \
-    calculate_equal_opportunity_difference, calculate_average_odds_difference, calculate_FPR_difference
+from src.utils.fairness import calculate_Disparate_Impact, calculate_SPD, \
+    calculate_equal_opportunity_difference, calculate_average_odds_difference, calculate_FPR_difference, \
+    calculate_TPR_difference
 import tensorflow as tf
 from tensorflow.keras import backend as K  # noqa: N812
 from pathlib import Path
@@ -14,10 +15,7 @@ import logging
 import csv
 import numpy as np
 import matplotlib.pyplot as plt
-import copy
-from sklearn import metrics
-import time
-from src.dnn_testing.eAI.utils.fault_localization_mixed_v2 import FaultLocalization
+from utils.fault_localization_mixed import FaultLocalization
 
 logger = logging.getLogger(__name__)
 logger.disabled = True
@@ -57,14 +55,7 @@ class EvaluateFairness:
         # input_pos = self.data_dict['POS']
         # input_both = self.data_dict['BOTH']
 
-        file_name = "repair-summary-{}-{}-{}.csv".format(based_on, fairness_measure, time.time())
-        data_file = open(self.output_dir / file_name, mode='w', newline='',
-                         encoding='utf-8')
-        data_writer = csv.writer(data_file)
-        data_writer.writerow(['Epoch', 'Time', 'Time_breakdown'])
-
         for i in range(start_iteration, num_runs):
-            since = time.time()
             input_neg = self.data_dict[i]['NEG']
             input_pos = self.data_dict[i]['POS']
             input_both = self.data_dict[i]['BOTH']
@@ -78,7 +69,7 @@ class EvaluateFairness:
                 shutil.rmtree(localized_data_dir_path)
             localized_data_dir_path.mkdir()
             self.output_files = set()
-            arachne = FairArachne2()
+            arachne = FairFLRep()
             arachne.localize_bias(self.model_dir, input_neg, input_pos, input_both, localized_data_dir, verbose, unfav=unfav,
                                sample_global=False, based_on=based_on, topN=topN)
 
@@ -104,13 +95,6 @@ class EvaluateFairness:
                 i,
                 verbose,
             )
-            time_elapsed = time.time() - since
-            data_writer.writerow([i, time_elapsed, '{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60)])
-
-            data_file.close()
-            data_file = open(self.output_dir / file_name, mode='a+', newline='',
-                             encoding='utf-8')
-            data_writer = csv.writer(data_file)
     def evaluate_arachne(self,
                  num_runs,
                  fairness_measure,
@@ -127,14 +111,7 @@ class EvaluateFairness:
         score_rr = []
         score_br = []
 
-        file_name = "repair-summary-arachne-{}-{}-{}.csv".format(based_on, fairness_measure, time.time())
-        data_file = open(self.output_dir / file_name, mode='w', newline='',
-                         encoding='utf-8')
-        data_writer = csv.writer(data_file)
-        data_writer.writerow(['Epoch', 'Time', 'Time_breakdown'])
-
-        for i in range(start_iteration, num_runs):
-            since = time.time()
+        for i in range(num_runs):
             input_neg = self.data_dict[i]['NEG']
             input_pos = self.data_dict[i]['POS']
             input_both = self.data_dict[i]['BOTH']
@@ -173,14 +150,7 @@ class EvaluateFairness:
                 fairness_measure,
                 verbose,
             )
-            time_elapsed = time.time() - since
-            data_writer.writerow([i, time_elapsed, '{:.0f}m {:.0f}s'.format(time_elapsed // 60, time_elapsed % 60)])
-
-            data_file.close()
-            data_file = open(self.output_dir / file_name, mode='a+', newline='',
-                             encoding='utf-8')
-            data_writer = csv.writer(data_file)
-class FairArachne2:
+class FairFLRep:
     def __init__(self):
         """Initialize."""
         self.num_grad = None
@@ -231,12 +201,12 @@ class FairArachne2:
 
         reshaped_model = self._reshape_target_model(model, input_both)
 
-        if based_on == 1 or based_on == 5:
-            list_candidates, candidates, data_candidate_dict = fault_localization._compute_gradient_pos_neg(reshaped_model, based_on=based_on, local_base_on=based_on)
-            _, pool = fault_localization._compute_forward_impact_pos_neg(reshaped_model, candidates, list_candidates, data_candidate_dict,
-                                                                        self.num_grad, based_on=based_on)
-
-            #list_pool, pool = fault_localization._compute_forward_impact_neg_pos(reshaped_model, (candidates_neg, candidates_pos), (list_imp_neg, list_imp_pos), (data_candidate_dict_neg, data_candidate_dict_pos), self.num_grad, based_on=3)
+        if based_on == 1:
+            list_imp_neg, candidates_neg, data_candidate_dict_neg = fault_localization._compute_gradient(reshaped_model, input_neg,
+                                                                                                   based_on=based_on, local_base_on=0)
+            list_imp_pos, candidates_pos, data_candidate_dict_pos = fault_localization._compute_gradient(reshaped_model, input_pos,
+                                                                                based_on=based_on, local_base_on=1)
+            list_pool, pool = fault_localization._compute_forward_impact_neg_pos(reshaped_model, (candidates_neg, candidates_pos), (list_imp_neg, list_imp_pos), (data_candidate_dict_neg, data_candidate_dict_pos), self.num_grad, based_on=3)
         elif based_on == 2: ## todo: Both positive and negative, without knowledge of sensitive
             list_candidates, candidates, data_candidate_dict = fault_localization._compute_gradient(reshaped_model, input_both, based_on=based_on, local_base_on=2)
             _, pool = fault_localization._compute_forward_impact_single(reshaped_model, input_both, candidates, list_candidates, data_candidate_dict, self.num_grad, based_on=based_on)
@@ -249,6 +219,21 @@ class FairArachne2:
         elif based_on == 4 or based_on == 6: ## todo: Both positive and negative, without knowledge of sensitive
             list_candidates, candidates, data_candidate_dict = fault_localization._compute_gradient(reshaped_model, input_both, based_on=based_on, local_base_on=2)
             _, pool = fault_localization._compute_forward_impact_single(reshaped_model, input_both, candidates, list_candidates, data_candidate_dict, self.num_grad, based_on=based_on)
+        elif based_on == 5:
+            list_imp_neg, candidates_neg, data_candidate_dict_neg = fault_localization._compute_gradient(reshaped_model,
+                                                                                                         input_neg,
+                                                                                                         based_on=based_on,
+                                                                                                         local_base_on=0)
+            list_imp_pos, candidates_pos, data_candidate_dict_pos = fault_localization._compute_gradient(reshaped_model,
+                                                                                                         input_pos,
+                                                                                                         based_on=based_on,
+                                                                                                         local_base_on=1)
+            list_pool, pool = fault_localization._compute_forward_impact_neg_pos(reshaped_model,
+                                                                                 (candidates_neg, candidates_pos),
+                                                                                 (list_imp_neg, list_imp_pos), (
+                                                                                 data_candidate_dict_neg,
+                                                                                 data_candidate_dict_pos),
+                                                                                 self.num_grad, based_on=3)
         elif based_on == -2:
             list_candidates, candidates, data_candidate_dict = fault_localization._compute_gradient(reshaped_model,
                                                                                                     input_both,
@@ -1309,8 +1294,11 @@ class FairArachne2:
         elif measure == 'EOD':
             f_score = calculate_equal_opportunity_difference(TP_a, TN_a, FN_a, FP_a, TP_b, TN_b, FN_b, FP_b)
         elif measure == 'AOD':
-            #f_score = calculate_average_odds_difference(TP_a, TN_a, FN_a, FP_a, TP_b, TN_b, FN_b, FP_b)
+            f_score = calculate_average_odds_difference(TP_a, TN_a, FN_a, FP_a, TP_b, TN_b, FN_b, FP_b)
+        elif measure == 'FPR':
             f_score = calculate_FPR_difference(TP_a, TN_a, FN_a, FP_a, TP_b, TN_b, FN_b, FP_b)
+        elif measure == 'TPR':
+            f_score = calculate_TPR_difference(TP_a, TN_a, FN_a, FP_a, TP_b, TN_b, FN_b, FP_b)
         # else:
         return abs(f_score)
 
@@ -1659,7 +1647,7 @@ class Arachne:
         """Initialize."""
         self.num_grad = None
         self.num_particles = 100
-        self.num_iterations = 21
+        self.num_iterations = 30
         self.num_input_pos_sampled = 200
         self.velocity_phi = 4.1
         self.min_iteration_range = 10
